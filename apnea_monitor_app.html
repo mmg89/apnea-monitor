@@ -284,10 +284,16 @@
     </div>
   </div>
 
+  <!-- FIX #1: The <audio> tag is now here, in the body, BEFORE the script -->
+  <audio id="silentAudio" loop>
+    <source src="data:audio/mp3;base64,SUQzBAAAAAABEVRYWFgAAAAtAAADY29tbWVudABCaWdTb3VuZEJhbmsuY29tIC8gTGliAv4DgQAAAAAABRCSagYGRANwAAAAeAAAAkAAABwAAAAgAAAAAAEBUGF0MBwAAAAFASEEBAAAACBAAAAAAAB8CUAAAAAABRIiyDgQUGkAAADBAAAAAAAAAAAlkIgnwADAAAAAQAAAAEAAПАaAAAAAABsAAAAAALEAac/yAAAAAAbSAAAAAAEUSRIjPj4/MTE5QEFCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaW11eX2BhYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5eoGEhYaHiImKi4yNjo+QkZKTlJWWl5iZmpucnZ6foKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr/AwcLDxMXGx8jJysvMzc7P0NHS09TV1tfY2drb3N3e3+Di4+Tl5ufo6err7O3u7/Dx8vP09fb3+Pn6+/z9/g==" type="audio/mp3">
+  </audio>
+
   <script>
     let device = null;
     let characteristic = null;
     let alertCount = 0;
+    let bleBuffer = "";
 
     const statusIndicator = document.getElementById('statusIndicator');
     const statusText = document.getElementById('statusText');
@@ -299,22 +305,11 @@
     const vibrateToggle = document.getElementById('vibrateToggle');
     const soundToggle = document.getElementById('soundToggle');
     const errorMessage = document.getElementById('errorMessage');
+    const silentAudio = document.getElementById('silentAudio'); // This will now work!
 
     // Request notification permission on load
     if ('Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission();
-    }
-
-    // Request wake lock to keep screen on
-    let wakeLock = null;
-    async function requestWakeLock() {
-      try {
-        if ('wakeLock' in navigator) {
-          wakeLock = await navigator.wakeLock.request('screen');
-        }
-      } catch (err) {
-        console.log('Wake lock failed:', err);
-      }
     }
 
     function showError(message) {
@@ -330,7 +325,7 @@
       statusDetail.textContent = detail;
       statusIndicator.textContent = emoji;
       
-      if (status === 'Connected') {
+      if (status === 'Connected' || status.includes('APNEA')) {
         statusIndicator.classList.remove('disconnected');
         statusIndicator.classList.add('connected');
       } else {
@@ -342,12 +337,10 @@
     function triggerAlert() {
       alertCount++;
       
-      // Vibrate if enabled
       if (vibrateToggle.checked && 'vibrate' in navigator) {
         navigator.vibrate([500, 200, 500, 200, 500]);
       }
       
-      // Play sound if enabled
       if (soundToggle.checked) {
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
         const oscillator = audioContext.createOscillator();
@@ -364,7 +357,6 @@
         setTimeout(() => oscillator.stop(), 300);
       }
       
-      // Show notification
       if (Notification.permission === 'granted') {
         new Notification('⚠️ Apnea Alert!', {
           body: 'Breathing stopped detected. Check immediately.',
@@ -374,7 +366,6 @@
         });
       }
       
-      // Add to log
       const now = new Date();
       const timeString = now.toLocaleTimeString();
       
@@ -396,36 +387,30 @@
         connectBtn.disabled = true;
         updateStatus('Connecting...', 'Searching for ApneaTracker', '🔍');
 
-        // --- THIS IS THE CORRECTED CODE BLOCK ---
         device = await navigator.bluetooth.requestDevice({
           filters: [{
             name: 'ApneaTracker',
             services: ['6e400001-b5a3-f393-e0a9-e50e24dcca9e']
           }]
         });
-        // --- END OF CORRECTION ---
 
         const server = await device.gatt.connect();
         const service = await server.getPrimaryService('6e400001-b5a3-f393-e0a9-e50e24dcca9e');
-        
-        // TX characteristic (receive data from Puck)
         const txChar = await service.getCharacteristic('6e400003-b5a3-f393-e0a9-e50e24dcca9e');
-        
-        // RX characteristic (send data to Puck)
         characteristic = await service.getCharacteristic('6e400002-b5a3-f393-e0a9-e50e24dcca9e');
 
         await txChar.startNotifications();
         txChar.addEventListener('characteristicvaluechanged', handleData);
-
         device.addEventListener('gattserverdisconnected', onDisconnected);
+
+        // FIX #2: Play silent audio AFTER connection is successful
+        silentAudio.play();
 
         updateStatus('Connected', 'Monitoring active', '✅');
         connectBtn.classList.add('hidden');
         disconnectBtn.classList.remove('hidden');
         resetBtn.classList.remove('hidden');
         
-        await requestWakeLock();
-
       } catch (error) {
         console.error('Connection error:', error);
         showError('Connection failed: ' + error.message);
@@ -435,25 +420,32 @@
     }
 
     function handleData(event) {
-      const value = new TextDecoder().decode(event.target.value);
-      console.log('Received:', value);
-      
-      try {
-        const data = JSON.parse(value);
-        
-        if (data.type === 'CONNECTED') {
-          updateStatus('Connected', 'Monitoring active', '✅');
-        } else if (data.type === 'APNEA_ALERT') {
-          triggerAlert();
-          updateStatus('⚠️ APNEA DETECTED', 'Check immediately!', '🚨');
-          setTimeout(() => {
-            if (device && device.gatt.connected) {
-              updateStatus('Connected', 'Monitoring active', '✅');
+      const incomingText = new TextDecoder().decode(event.target.value);
+      bleBuffer += incomingText;
+
+      while (bleBuffer.includes('\n')) {
+        const messageEndIndex = bleBuffer.indexOf('\n');
+        const completeMessage = bleBuffer.substring(0, messageEndIndex);
+        bleBuffer = bleBuffer.substring(messageEndIndex + 1);
+
+        if (completeMessage) {
+          console.log('Received Complete Message:', completeMessage);
+          try {
+            const data = JSON.parse(completeMessage);
+
+            if (data.type === 'APNEA_ALERT') {
+              triggerAlert();
+              updateStatus('⚠️ APNEA DETECTED', 'Check immediately!', '🚨');
+              setTimeout(() => {
+                if (device && device.gatt.connected) {
+                  updateStatus('Connected', 'Monitoring active', '✅');
+                }
+              }, 5000);
             }
-          }, 5000);
+          } catch (e) {
+            console.error('Failed to parse JSON:', completeMessage);
+          }
         }
-      } catch (e) {
-        console.log('Non-JSON data:', value);
       }
     }
 
@@ -465,11 +457,7 @@
       connectBtn.disabled = false;
       device = null;
       characteristic = null;
-      
-      if (wakeLock) {
-        wakeLock.release();
-        wakeLock = null;
-      }
+      silentAudio.pause();
     }
 
     async function disconnect() {
@@ -494,26 +482,15 @@
     disconnectBtn.addEventListener('click', disconnect);
     resetBtn.addEventListener('click', resetDetection);
 
-    // Reinstall service worker on visibility change
-    document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && wakeLock === null && device && device.gatt.connected) {
-        requestWakeLock();
-      }
-    });
-
-
-
-// Add this to the end of your main <script> block
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').then(registration => {
-      console.log('ServiceWorker registration successful with scope: ', registration.scope);
-    }, err => {
-      console.log('ServiceWorker registration failed: ', err);
-    });
-  });
-}
-
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').then(registration => {
+          console.log('ServiceWorker registration successful with scope: ', registration.scope);
+        }, err => {
+          console.log('ServiceWorker registration failed: ', err);
+        });
+      });
+    }
   </script>
 </body>
 </html>
