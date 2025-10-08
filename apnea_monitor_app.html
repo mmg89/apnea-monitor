@@ -382,42 +382,46 @@
       alertList.insertBefore(alertItem, alertList.firstChild);
     }
 
-    async function connectDevice() {
-      try {
-        connectBtn.disabled = true;
-        updateStatus('Connecting...', 'Searching for ApneaTracker', '🔍');
+ async function connectDevice() {
+  try {
+    // Start playing audio IMMEDIATELY on user tap. This is the key fix.
+    // The browser requires a user gesture to start audio playback.
+    silentAudio.play();
 
-        device = await navigator.bluetooth.requestDevice({
-          filters: [{
-            name: 'ApneaTracker',
-            services: ['6e400001-b5a3-f393-e0a9-e50e24dcca9e']
-          }]
-        });
+    connectBtn.disabled = true;
+    updateStatus('Connecting...', 'Searching for ApneaTracker', '🔍');
 
-        const server = await device.gatt.connect();
-        const service = await server.getPrimaryService('6e400001-b5a3-f393-e0a9-e50e24dcca9e');
-        const txChar = await service.getCharacteristic('6e400003-b5a3-f393-e0a9-e50e24dcca9e');
-        characteristic = await service.getCharacteristic('6e400002-b5a3-f393-e0a9-e50e24dcca9e');
+    device = await navigator.bluetooth.requestDevice({
+      filters: [{
+        name: 'ApneaTracker',
+        services: ['6e400001-b5a3-f393-e0a9-e50e24dcca9e']
+      }]
+    });
 
-        await txChar.startNotifications();
-        txChar.addEventListener('characteristicvaluechanged', handleData);
-        device.addEventListener('gattserverdisconnected', onDisconnected);
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService('6e400001-b5a3-f393-e0a9-e50e24dcca9e');
+    const txChar = await service.getCharacteristic('6e400003-b5a3-f393-e0a9-e50e24dcca9e');
+    characteristic = await service.getCharacteristic('6e400002-b5a3-f393-e0a9-e50e24dcca9e');
 
-        // FIX #2: Play silent audio AFTER connection is successful
-        silentAudio.play();
+    await txChar.startNotifications();
+    txChar.addEventListener('characteristicvaluechanged', handleData);
+    device.addEventListener('gattserverdisconnected', onDisconnected);
 
-        updateStatus('Connected', 'Monitoring active', '✅');
-        connectBtn.classList.add('hidden');
-        disconnectBtn.classList.remove('hidden');
-        resetBtn.classList.remove('hidden');
-        
-      } catch (error) {
-        console.error('Connection error:', error);
-        showError('Connection failed: ' + error.message);
-        updateStatus('Disconnected', 'Connection failed', '⚫');
-        connectBtn.disabled = false;
-      }
-    }
+    updateStatus('Connected', 'Monitoring active', '✅');
+    connectBtn.classList.add('hidden');
+    disconnectBtn.classList.remove('hidden');
+    resetBtn.classList.remove('hidden');
+
+  } catch (error) {
+    // If connection fails for any reason (e.g., user cancels), stop the audio.
+    silentAudio.pause();
+
+    console.error('Connection error:', error);
+    showError('Connection failed: ' + error.message);
+    updateStatus('Disconnected', 'Connection failed', '⚫');
+    connectBtn.disabled = false;
+  }
+}
 
     function handleData(event) {
       console.log('handleData function was triggered!');
