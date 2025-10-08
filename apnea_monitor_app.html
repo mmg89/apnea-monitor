@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+	<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -420,6 +420,7 @@
     }
 
     function handleData(event) {
+      console.log('handleData function was triggered!');
       const incomingText = new TextDecoder().decode(event.target.value);
       bleBuffer += incomingText;
 
