@@ -404,6 +404,7 @@
     characteristic = await service.getCharacteristic('6e400002-b5a3-f393-e0a9-e50e24dcca9e');
 
     await txChar.startNotifications();
+    console.log('Successfully started notifications. Listening for data...');
     txChar.addEventListener('characteristicvaluechanged', handleData);
     device.addEventListener('gattserverdisconnected', onDisconnected);
 
@@ -423,32 +424,59 @@
   }
 }
 
-    function handleData(event) {
-      console.log('handleData function was triggered!');
+function handleData(event) {
+      // =======================
+      // MODIFICATION #1: Add a log right at the start to prove this function is being called.
+      // This is your most important debugging tool.
+      console.log('Fired: characteristicvaluechanged');
+      // =======================
+
       const incomingText = new TextDecoder().decode(event.target.value);
       bleBuffer += incomingText;
 
       while (bleBuffer.includes('\n')) {
         const messageEndIndex = bleBuffer.indexOf('\n');
-        const completeMessage = bleBuffer.substring(0, messageEndIndex);
+        // Get the complete message, trimming any whitespace like \r
+        const completeMessage = bleBuffer.substring(0, messageEndIndex).trim();
         bleBuffer = bleBuffer.substring(messageEndIndex + 1);
 
         if (completeMessage) {
+          // =======================
+          // MODIFICATION #2: Log the exact message string BEFORE you try to parse it.
+          // This will show you exactly what the Puck is sending.
           console.log('Received Complete Message:', completeMessage);
+          // =======================
+          
+          let isAlert = false;
+
+          // First, try to parse it as JSON (your original logic)
           try {
             const data = JSON.parse(completeMessage);
-
             if (data.type === 'APNEA_ALERT') {
-              triggerAlert();
-              updateStatus('⚠️ APNEA DETECTED', 'Check immediately!', '🚨');
-              setTimeout(() => {
-                if (device && device.gatt.connected) {
-                  updateStatus('Connected', 'Monitoring active', '✅');
-                }
-              }, 5000);
+              isAlert = true;
             }
           } catch (e) {
-            console.error('Failed to parse JSON:', completeMessage);
+            // This 'catch' block will run if the message is NOT valid JSON.
+            console.warn('Could not parse JSON. Checking if the raw message is an alert.');
+            
+            // =======================
+            // MODIFICATION #3: Add a fallback check. If it's not JSON, maybe it's just a simple string?
+            if (completeMessage === 'APNEA_ALERT') {
+              isAlert = true;
+            }
+            // =======================
+          }
+          
+          // Now, if any of the checks above found an alert, trigger it.
+          if (isAlert) {
+            console.log('Condition MET. Triggering alert!');
+            triggerAlert();
+            updateStatus('⚠️ APNEA DETECTED', 'Check immediately!', '🚨');
+            setTimeout(() => {
+              if (device && device.gatt.connected) {
+                updateStatus('Connected', 'Monitoring active', '✅');
+              }
+            }, 5000);
           }
         }
       }
